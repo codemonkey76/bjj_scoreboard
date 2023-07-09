@@ -1,0 +1,17 @@
+[package]
+name = "bjj_scoreboard"
+version = "0.1.0"
+edition = "2021"
+authors = ["Shane Poppleton <shane@bjja.com.au>"]
+description = "BJJ Scoreboard Application"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/codemonkey76/bjj_scoreboard"
+
+[dependencies]
+anyhow = "1.0.71"
+crossterm = "0.26.1"
+eframe = "0.22.0"
+egui_extras = { version = "0.22.0", features = ["svg"] }
+egui_grid = "0.2.0"
+strum = "0.25.0"
+strum_macros = "0.25.1"
