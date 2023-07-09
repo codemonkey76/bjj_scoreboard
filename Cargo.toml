@@ -13,5 +13,6 @@ crossterm = "0.26.1"
 eframe = "0.22.0"
 egui_extras = { version = "0.22.0", features = ["svg"] }
 egui_grid = "0.2.0"
+rodio = "0.17.1"
 strum = "0.25.0"
 strum_macros = "0.25.1"

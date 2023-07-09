@@ -39,6 +39,35 @@ pub enum SplitMode {
     Exact,
     Proportional
 }
+
+pub trait RectReduce where Self: Sized {
+    fn shrink_to_aspect_ratio(&self, value: f32) -> Self;
+}
+
+impl RectReduce for Rect {
+    fn shrink_to_aspect_ratio(&self, value: f32) -> Self {
+        let wide = self.width() > self.height();
+
+        match wide {
+            true => {
+                let new_width = self.height() * value;
+
+                Self {
+                    min: Pos2::new(self.min.x + (self.width() - new_width) / 2.0, self.min.y),
+                    max: Pos2::new(self.max.x - (self.width() - new_width) / 2.0, self.max.y)
+                }
+            }
+            false => {
+                let new_height = self.width() / value;
+
+                Self {
+                    min: Pos2::new(self.min.x, self.min.y + (self.height() - new_height) / 2.0),
+                    max: Pos2::new(self.max.x, self.max.y - (self.height() - new_height) / 2.0)
+                }
+            }
+        }
+    }
+}
 trait Split where Self: Sized {
     fn split(&self, direction: SplitDirection, mode: SplitMode, at: f32) -> (Self, Self);
     fn split_v(&self, mode: SplitMode, at: f32) -> (Self, Self);
@@ -115,7 +144,7 @@ fn calc_competitor_grid(rect: Rect) -> CompetitorGrid {
     let (main, points) = rect.split_h(SplitMode::Proportional, 5.0 / 6.0);
     let (left, right) = main.split_h(SplitMode::Proportional, 10.0 / 11.0);
     let (comp, team) = left.split_v(SplitMode::Proportional, 2.0 / 3.0);
-    let (flag, name) = comp.split_h(SplitMode::Proportional, 1.0 / 8.0);
+    let (flag, name) = comp.split_h(SplitMode::Proportional, 1.0 / 6.0);
     let (advantages, penalties) = right.split_v(SplitMode::Proportional, 0.5);
 
     CompetitorGrid {

@@ -1,15 +1,21 @@
 pub mod grid;
 use std::collections::HashMap;
+use std::io::Cursor;
 use std::ops::Add;
+use std::thread::sleep;
+use std::time::Duration;
 use anyhow::Result;
 use bjj_scoreboard::{BJJMatch, Competitor, CompetitorNumber, Country, MatchInformation};
 use eframe::egui;
-use eframe::egui::{Align2, Color32, Key, Pos2, Rounding, TextureHandle, TextureOptions};
+use eframe::egui::{Align2, Color32, Key, Pos2, Rounding, TextureHandle, TextureOptions, Vec2};
 use eframe::emath::Rect;
 use egui_extras::image::FitTo;
+use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
+use rodio::source::SineWave;
 use crate::AppState::NewMatchDialog;
 use strum::IntoEnumIterator;
 use crate::grid::calc_grids;
+use crate::grid::RectReduce;
 
 fn main() -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {
@@ -35,7 +41,34 @@ struct BjjScoreboard {
     first_run: bool,
     color_scheme: ColorScheme,
     font_sizes: FontSizes,
-    flags: HashMap<String, TextureHandle>
+    flags: HashMap<String, TextureHandle>,
+    audio: Audio,
+}
+
+struct Audio {
+    sound: &'static [u8],
+    stream_handle: Option<OutputStreamHandle>,
+    sink: Option<Sink>,
+}
+
+impl Audio {
+    fn play_air_horn(&self) {
+        println!("Attempting to play sound");
+        if let Some(sink) = &self.sink {
+            println!("Sink is valid, appending");
+            sink.append(Decoder::new_wav(Cursor::new(self.sound)).unwrap());
+            sleep(Duration::from_secs(5));
+        }
+    }
+}
+impl Default for Audio {
+    fn default() -> Self {
+        Self {
+            sound: include_bytes!("../assets/sounds/air-horn.wav"),
+            stream_handle: None,
+            sink: None,
+        }
+    }
 }
 
 struct FontSizes {
@@ -60,7 +93,7 @@ impl Default for FontSizes {
             competitor_adv: 32.0,
             competitor_pen_label: 12.0,
             competitor_pen: 32.0,
-            competitor_points: 130.0,
+            competitor_points: 120.0,
             time: 32.0,
             fight_info_heading: 32.0,
             fight_info_sub_heading: 28.0,
@@ -114,7 +147,7 @@ impl Default for ColorScheme {
             competitor_two_pen: Color32::from_rgb(255, 255, 255),
             competitor_two_points_bg: Color32::from_rgb(46, 100, 209),
             competitor_two_points: Color32::from_rgb(255, 255, 255),
-            bottom_pane_bg: Color32::from_rgb(0, 160, 0),
+            bottom_pane_bg: Color32::from_rgb(0, 0, 0),
             time: Color32::from_rgb(255, 255, 180),
             fight_info_heading: Color32::from_rgb(200, 200, 140),
             fight_info_sub_heading: Color32::from_rgb(255, 255, 255),
@@ -131,7 +164,8 @@ impl Default for BjjScoreboard {
             first_run: true,
             color_scheme: Default::default(),
             font_sizes: Default::default(),
-            flags: HashMap::new()
+            flags: HashMap::new(),
+            audio: Default::default()
         }
     }
 }
@@ -156,10 +190,17 @@ impl eframe::App for BjjScoreboard {
 
 impl BjjScoreboard {
     fn setup(&mut self, ctx: &egui::Context) {
-        println!("Starting setup");
         self.load_fonts(ctx);
         self.load_flags(ctx);
+        self.load_sounds();
     }
+
+    fn load_sounds(&mut self) {
+        let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+        self.audio.sink = Some(Sink::try_new(&stream_handle).unwrap());
+        self.audio.stream_handle = Some(stream_handle);
+    }
+
     fn load_flags(&mut self, ctx: &egui::Context) {
         for country in Country::iter() {
             let data = country.data();
@@ -184,13 +225,16 @@ impl BjjScoreboard {
             }
         }
     }
+
     fn load_fonts(&self, ctx: &egui::Context) {
-        println!("Loading fonts");
         let mut fonts = egui::FontDefinitions::default();
+
+        let mut font_data = egui::FontData::from_static(include_bytes!("../assets/fonts/BebasNeue-Regular.ttf"));
+        font_data.tweak.y_offset_factor = 0.08;
 
         fonts.font_data.insert(
             "main_font".to_owned(),
-            egui::FontData::from_static(include_bytes!("../assets/fonts/BebasNeue-Regular.ttf")),
+            font_data,
         );
 
         fonts
@@ -207,6 +251,7 @@ impl BjjScoreboard {
 
         ctx.set_fonts(fonts);
     }
+
     fn draw_competitor_dialog(heading: &str, competitor: &mut Competitor, ui: &mut egui::Ui) {
         ui.heading(heading);
         ui.end_row();
@@ -315,21 +360,21 @@ impl BjjScoreboard {
         ui.painter().rect_filled(match_grid.time.full, Rounding::none(), self.color_scheme.bottom_pane_bg);
 
         ui.painter().text(
-            match_grid.competitor_one.name.left_center(),
+            match_grid.competitor_one.name.left_center().add(Vec2 { x: 10.0 * scale_factor, y: 0.0}),
             Align2::LEFT_CENTER,
             self.bjj_match.info.competitor_one.get_display_name(),
             egui::FontId { size: self.font_sizes.competitor_name * scale_factor, ..Default::default()},
             self.color_scheme.competitor_one_name);
 
         ui.painter().text(
-            match_grid.competitor_one.team.left_center(),
+            match_grid.competitor_one.team.left_center().add( Vec2 { x: 10.0 * scale_factor, y: 0.0 }),
             Align2::LEFT_CENTER,
             self.bjj_match.info.competitor_one.team_name.as_str(),
             egui::FontId { size: self.font_sizes.competitor_team * scale_factor, ..Default::default()},
             self.color_scheme.competitor_one_team);
 
         ui.painter().text(
-            match_grid.competitor_one.advantages.center_top(),
+            match_grid.competitor_one.advantages.center_top().add(Vec2 { x: 0.0, y: 2.0 * scale_factor }),
             Align2::CENTER_TOP,
             "Adv.",
             egui::FontId { size: self.font_sizes.competitor_adv_label * scale_factor, ..Default::default()},
@@ -343,7 +388,7 @@ impl BjjScoreboard {
             self.color_scheme.competitor_one_adv);
 
         ui.painter().text(
-            match_grid.competitor_one.penalties.center_top(),
+            match_grid.competitor_one.penalties.center_top().add(Vec2 { x: 0.0, y: 2.0 * scale_factor }),
             Align2::CENTER_TOP,
             "Pen.",
             egui::FontId { size: self.font_sizes.competitor_pen_label * scale_factor, ..Default::default()},
@@ -364,21 +409,21 @@ impl BjjScoreboard {
             self.color_scheme.competitor_one_points);
 
         ui.painter().text(
-            match_grid.competitor_two.name.left_center(),
+            match_grid.competitor_two.name.left_center().add(Vec2 { x: 10.0 * scale_factor, y: 0.0}),
             Align2::LEFT_CENTER,
             self.bjj_match.info.competitor_two.get_display_name(),
             egui::FontId { size: self.font_sizes.competitor_name * scale_factor, ..Default::default()},
             self.color_scheme.competitor_two_name);
 
         ui.painter().text(
-            match_grid.competitor_two.team.left_center(),
+            match_grid.competitor_two.team.left_center().add( Vec2 { x: 10.0 * scale_factor, y: 0.0 }),
             Align2::LEFT_CENTER,
             self.bjj_match.info.competitor_two.team_name.as_str(),
             egui::FontId { size: self.font_sizes.competitor_team * scale_factor, ..Default::default()},
             self.color_scheme.competitor_two_team);
 
         ui.painter().text(
-            match_grid.competitor_two.advantages.center_top(),
+            match_grid.competitor_two.advantages.center_top().add(Vec2 { x: 0.0, y: 2.0 * scale_factor }),
             Align2::CENTER_TOP,
             "Adv.",
             egui::FontId { size: self.font_sizes.competitor_adv_label * scale_factor, ..Default::default()},
@@ -392,7 +437,7 @@ impl BjjScoreboard {
             self.color_scheme.competitor_two_adv);
 
         ui.painter().text(
-            match_grid.competitor_two.penalties.center_top(),
+            match_grid.competitor_two.penalties.center_top().add(Vec2 { x: 0.0, y: 2.0 * scale_factor }),
             Align2::CENTER_TOP,
             "Pen.",
             egui::FontId { size: self.font_sizes.competitor_pen_label * scale_factor, ..Default::default()},
@@ -413,9 +458,10 @@ impl BjjScoreboard {
             self.color_scheme.competitor_two_points);
 
         let country_data = self.bjj_match.info.competitor_one.country.data();
+
         ui.painter().image(
             self.flags.get(country_data.code.as_str()).unwrap().id(),
-            match_grid.competitor_one.flag,
+            match_grid.competitor_one.flag.shrink_to_aspect_ratio(2.0).shrink(5.0*scale_factor),
             Rect::from_min_max(Pos2 { x: 0.0, y: 0.0 }, Pos2 { x: 1.0, y: 1.0}),
             Color32::WHITE
         );
@@ -423,7 +469,7 @@ impl BjjScoreboard {
         let country_data = self.bjj_match.info.competitor_two.country.data();
         ui.painter().image(
             self.flags.get(country_data.code.as_str()).unwrap().id(),
-            match_grid.competitor_two.flag,
+            match_grid.competitor_two.flag.shrink_to_aspect_ratio(2.0).shrink(5.0*scale_factor),
             Rect::from_min_max(Pos2 { x: 0.0, y: 0.0 }, Pos2 { x: 1.0, y: 1.0}),
             Color32::WHITE
         );
@@ -488,6 +534,7 @@ impl BjjScoreboard {
                             ui.end_row();
                             if ui.add(egui::Button::new("Start Match")).clicked() {
                                 self.app_state = AppState::Normal;
+                                self.audio.play_air_horn();
                                 self.bjj_match.start();
                             }
                         });
@@ -497,7 +544,6 @@ impl BjjScoreboard {
 
 
 }
-
 
 
 pub fn format_millis(millis: usize) -> String {
@@ -511,4 +557,12 @@ pub fn format_millis(millis: usize) -> String {
     } else {
         format!("{:02}:{:02}.{:03}", minutes, seconds, milliseconds)
     }
+}
+
+pub fn play_audio(sound_file: &'static [u8]) {
+    let (_stream, stream_handle) = OutputStream::try_default().expect("Failed to open default audio device");
+    let file = Cursor::new(sound_file);
+    let source = Decoder::new_wav(file).expect("Failed to decode WAV file");
+    stream_handle.play_raw(source.convert_samples()).expect("Failed to play file");
+    sleep(Duration::from_secs(10));
 }
