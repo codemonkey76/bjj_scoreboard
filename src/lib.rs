@@ -1,4 +1,6 @@
 pub mod flags;
+pub mod ui;
+
 pub use flags::Country;
 pub use flags::Flag;
 

@@ -17,7 +17,7 @@ use crate::grid::RectReduce;
 
 fn main() -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {
-        initial_window_size: Some(egui::vec2(1280.0, 720.0)),
+        maximized: true,
         ..Default::default()
     };
     eframe::run_native(
@@ -35,6 +35,7 @@ enum AppState {
 
 struct BjjScoreboard {
     bjj_match: BJJMatch,
+    fullscreen: bool,
     app_state: AppState,
     match_dialog_open: bool,
     first_run: bool,
@@ -132,6 +133,7 @@ impl Default for BjjScoreboard {
     fn default() -> Self {
         Self {
             bjj_match: Default::default(),
+            fullscreen: false,
             app_state: AppState::NewMatchDialog,
             match_dialog_open: true,
             first_run: true,
@@ -144,7 +146,7 @@ impl Default for BjjScoreboard {
 }
 
 impl eframe::App for BjjScoreboard {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         if self.first_run {
             self.setup(ctx);
             self.first_run = false;
@@ -163,10 +165,12 @@ impl eframe::App for BjjScoreboard {
                     return;
                 }
                 self.draw_active_match_screen(ctx);
+                self.handle_input(ctx, frame);
                 ctx.request_repaint();
             },
             AppState::Ready => {
                 self.draw_active_match_screen(ctx);
+                self.handle_input(ctx, frame);
                 ctx.request_repaint();
             }
         }
@@ -177,10 +181,6 @@ impl BjjScoreboard {
     fn setup(&mut self, ctx: &egui::Context) {
         self.load_fonts(ctx);
         self.flags = Flag::load_textures(ctx);
-        for value in self.flags.values() {
-            println!("{:?}", value.name );
-            println!("{:?}", value.handle.as_ref().unwrap().id())
-        }
         self.audio.init();
     }
 
@@ -242,11 +242,15 @@ impl BjjScoreboard {
     fn draw_active_match_screen(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
             self.ui(ui);
-            self.handle_input(ctx);
         });
     }
 
-    fn handle_input(&mut self, ctx: &egui::Context) {
+    fn handle_input(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if ctx.input(|i| i.key_pressed(Key::F11)) {
+            println!("Fullscreen - Toggled");
+            self.fullscreen = !self.fullscreen;
+            frame.set_fullscreen(self.fullscreen);
+        }
         if ctx.input(|i| i.key_pressed(Key::Q)) {
             self.bjj_match.add_points(2, CompetitorNumber::One);
         }
