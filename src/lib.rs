@@ -25,7 +25,6 @@ enum ScoreField {
 }
 
 
-
 #[derive(Default ,Debug)]
 pub struct MatchScore {
     pub competitor_one_score: PlayerScore,

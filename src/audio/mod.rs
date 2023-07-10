@@ -9,17 +9,17 @@ pub struct Audio {
 }
 
 impl Audio {
-    pub fn play_air_horn(&self) {
-        if let Some(sink) = &self.sink {
-            let source = Decoder::new_wav(Cursor::new(self.sound)).expect("Unable to decode WAV file");
-            sink.append(source);
-        }
-    }
     pub fn init(&mut self) {
         let (stream, stream_handle) = OutputStream::try_default().unwrap();
         self.sink = Some(Sink::try_new(&stream_handle).unwrap());
         self.stream = Some(stream);
         self.stream_handle = Some(stream_handle);
+    }
+    pub fn play_air_horn(&self) {
+        if let Some(sink) = &self.sink {
+            let source = Decoder::new_wav(Cursor::new(self.sound)).expect("Unable to decode WAV file");
+            sink.append(source);
+        }
     }
 }
 impl Default for Audio {
