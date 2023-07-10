@@ -1,5 +1,8 @@
+pub mod flags;
+pub use flags::Country;
+pub use flags::Flag;
+
 use std::time::{Duration, SystemTime};
-use strum_macros::EnumIter;
 
 #[derive(Debug, PartialEq)]
 pub enum CompetitorNumber {
@@ -21,41 +24,7 @@ enum ScoreField {
     Penalties
 }
 
-#[derive(Debug, PartialEq, EnumIter)]
-pub enum Country {
-    Australia,
-    Brazil,
-    UnitedStates
-}
 
-impl Country {
-    pub fn data(&self) -> CountryData {
-        match self {
-            Country::Australia => CountryData {
-                code: "AU".to_owned(),
-                name: "Australia".to_owned(),
-                flag: include_bytes!("../assets/flags/au.svg")
-            },
-            Country::Brazil => CountryData {
-                code: "BR".to_owned(),
-                name: "Brazil".to_owned(),
-                flag: include_bytes!("../assets/flags/br.svg")
-            },
-            Country::UnitedStates => CountryData {
-                code: "US".to_owned(),
-                name: "United States".to_owned(),
-                flag: include_bytes!("../assets/flags/us.svg")
-            }
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct CountryData {
-    pub code: String,
-    pub name: String,
-    pub flag: &'static [u8]
-}
 
 #[derive(Default ,Debug)]
 pub struct MatchScore {

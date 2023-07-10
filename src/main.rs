@@ -1,21 +1,19 @@
 pub mod grid;
-use std::collections::HashMap;
-use std::io::Cursor;
+pub mod audio;
+
+use std::collections::BTreeMap;
 use std::ops::Add;
-use std::thread::sleep;
-use std::time::Duration;
 use anyhow::Result;
 use bjj_scoreboard::{BJJMatch, Competitor, CompetitorNumber, Country, MatchInformation};
 use eframe::egui;
-use eframe::egui::{Align2, Color32, Key, Pos2, Rounding, TextureHandle, TextureOptions, Vec2};
+use eframe::egui::{Align2, Color32, Key, Pos2, Rounding, Vec2};
 use eframe::emath::Rect;
-use egui_extras::image::FitTo;
-use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
-use rodio::source::SineWave;
-use crate::AppState::NewMatchDialog;
-use strum::IntoEnumIterator;
+
+use crate::audio::Audio;
+use bjj_scoreboard::Flag;
 use crate::grid::calc_grids;
 use crate::grid::RectReduce;
+
 
 fn main() -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {
@@ -31,7 +29,8 @@ fn main() -> Result<(), eframe::Error> {
 
 enum AppState {
     NewMatchDialog,
-    Normal
+    InProgress,
+    Ready,
 }
 
 struct BjjScoreboard {
@@ -41,34 +40,8 @@ struct BjjScoreboard {
     first_run: bool,
     color_scheme: ColorScheme,
     font_sizes: FontSizes,
-    flags: HashMap<String, TextureHandle>,
+    flags: BTreeMap<Country, Flag>,
     audio: Audio,
-}
-
-struct Audio {
-    sound: &'static [u8],
-    stream_handle: Option<OutputStreamHandle>,
-    sink: Option<Sink>,
-}
-
-impl Audio {
-    fn play_air_horn(&self) {
-        println!("Attempting to play sound");
-        if let Some(sink) = &self.sink {
-            println!("Sink is valid, appending");
-            sink.append(Decoder::new_wav(Cursor::new(self.sound)).unwrap());
-            sleep(Duration::from_secs(5));
-        }
-    }
-}
-impl Default for Audio {
-    fn default() -> Self {
-        Self {
-            sound: include_bytes!("../assets/sounds/air-horn.wav"),
-            stream_handle: None,
-            sink: None,
-        }
-    }
 }
 
 struct FontSizes {
@@ -159,12 +132,12 @@ impl Default for BjjScoreboard {
     fn default() -> Self {
         Self {
             bjj_match: Default::default(),
-            app_state: NewMatchDialog,
+            app_state: AppState::NewMatchDialog,
             match_dialog_open: true,
             first_run: true,
             color_scheme: Default::default(),
             font_sizes: Default::default(),
-            flags: HashMap::new(),
+            flags: BTreeMap::new(),
             audio: Default::default()
         }
     }
@@ -176,11 +149,23 @@ impl eframe::App for BjjScoreboard {
             self.setup(ctx);
             self.first_run = false;
         }
+
         match self.app_state {
             AppState::NewMatchDialog => {
                 self.draw_new_match_modal(ctx)
             },
-            AppState::Normal => {
+            AppState::InProgress => {
+                if self.bjj_match.time.get_remaining_time_milliseconds() == 0 {
+                    self.audio.play_air_horn();
+                    self.app_state = AppState::Ready;
+                    self.draw_new_match_modal(ctx);
+                    ctx.request_repaint();
+                    return;
+                }
+                self.draw_active_match_screen(ctx);
+                ctx.request_repaint();
+            },
+            AppState::Ready => {
                 self.draw_active_match_screen(ctx);
                 ctx.request_repaint();
             }
@@ -191,39 +176,12 @@ impl eframe::App for BjjScoreboard {
 impl BjjScoreboard {
     fn setup(&mut self, ctx: &egui::Context) {
         self.load_fonts(ctx);
-        self.load_flags(ctx);
-        self.load_sounds();
-    }
-
-    fn load_sounds(&mut self) {
-        let (_stream, stream_handle) = OutputStream::try_default().unwrap();
-        self.audio.sink = Some(Sink::try_new(&stream_handle).unwrap());
-        self.audio.stream_handle = Some(stream_handle);
-    }
-
-    fn load_flags(&mut self, ctx: &egui::Context) {
-        for country in Country::iter() {
-            let data = country.data();
-
-            let image = egui_extras::image::load_svg_bytes_with_size(
-                data.flag,
-                FitTo::Height(360)
-            );
-
-            match image {
-                Ok(color_image) => {
-                    let texture = ctx.load_texture(
-                        data.code.as_str(),
-                        color_image,
-                        TextureOptions::default()
-                    );
-                    self.flags.insert(data.code, texture);
-                }
-                Err(e) => {
-                    println!("Error loading SVG: {}", e);
-                }
-            }
+        self.flags = Flag::load_textures(ctx);
+        for value in self.flags.values() {
+            println!("{:?}", value.name );
+            println!("{:?}", value.handle.as_ref().unwrap().id())
         }
+        self.audio.init();
     }
 
     fn load_fonts(&self, ctx: &egui::Context) {
@@ -252,7 +210,7 @@ impl BjjScoreboard {
         ctx.set_fonts(fonts);
     }
 
-    fn draw_competitor_dialog(heading: &str, competitor: &mut Competitor, ui: &mut egui::Ui) {
+    fn _draw_competitor_dialog(&mut self, heading: &str, competitor: &mut Competitor, ui: &mut egui::Ui) {
         ui.heading(heading);
         ui.end_row();
 
@@ -274,9 +232,8 @@ impl BjjScoreboard {
             .show_ui(ui, |ui| {
                 ui.style_mut().wrap = Some(false);
                 ui.set_min_width(60.0);
-                for country in Country::iter() {
-                    let name = country.data().name;
-                    ui.selectable_value(&mut competitor.country, country, name);
+                for value in self.flags.values() {
+                    ui.selectable_value(&mut competitor.country, value.country, value.name.as_str());
                 }
             });
         ui.end_row();
@@ -339,7 +296,18 @@ impl BjjScoreboard {
             self.bjj_match.subtract_penalty( CompetitorNumber::Two);
         }
         if ctx.input(|i| i.key_pressed(Key::Space)) {
-            self.bjj_match.toggle_start_stop();
+            match self.app_state {
+                AppState::NewMatchDialog => {},
+                AppState::Ready => {
+                    self.audio.play_air_horn();
+                    self.bjj_match.start();
+                    self.app_state = AppState::InProgress
+                },
+                AppState::InProgress => {
+                    self.bjj_match.toggle_start_stop();
+                }
+            }
+
         }
     }
 
@@ -457,22 +425,28 @@ impl BjjScoreboard {
             egui::FontId { size: self.font_sizes.competitor_points * scale_factor, ..Default::default()},
             self.color_scheme.competitor_two_points);
 
-        let country_data = self.bjj_match.info.competitor_one.country.data();
+        if let Some(flag) = self.flags.get(&self.bjj_match.info.competitor_one.country) {
+            if let Some(handle) = &flag.handle {
+                ui.painter().image(
+                    handle.id(),
+                    match_grid.competitor_one.flag.shrink_to_aspect_ratio(2.0).shrink(5.0 * scale_factor),
+                    Rect::from_min_max(Pos2 { x: 0.0, y: 0.0 }, Pos2 { x: 1.0, y: 1.0 }),
+                    Color32::WHITE
+                );
+            }
+        }
 
-        ui.painter().image(
-            self.flags.get(country_data.code.as_str()).unwrap().id(),
-            match_grid.competitor_one.flag.shrink_to_aspect_ratio(2.0).shrink(5.0*scale_factor),
-            Rect::from_min_max(Pos2 { x: 0.0, y: 0.0 }, Pos2 { x: 1.0, y: 1.0}),
-            Color32::WHITE
-        );
 
-        let country_data = self.bjj_match.info.competitor_two.country.data();
-        ui.painter().image(
-            self.flags.get(country_data.code.as_str()).unwrap().id(),
-            match_grid.competitor_two.flag.shrink_to_aspect_ratio(2.0).shrink(5.0*scale_factor),
-            Rect::from_min_max(Pos2 { x: 0.0, y: 0.0 }, Pos2 { x: 1.0, y: 1.0}),
-            Color32::WHITE
-        );
+        if let Some(flag) = self.flags.get(&self.bjj_match.info.competitor_two.country) {
+            if let Some(handle) = &flag.handle {
+                ui.painter().image(
+                    handle.id(),
+                    match_grid.competitor_two.flag.shrink_to_aspect_ratio(2.0).shrink(5.0 * scale_factor),
+                    Rect::from_min_max(Pos2 { x: 0.0, y: 0.0 }, Pos2 { x: 1.0, y: 1.0 }),
+                    Color32::WHITE
+                );
+            }
+        }
 
         ui.painter().text(
             match_grid.time.time.center(),
@@ -495,7 +469,6 @@ impl BjjScoreboard {
             egui::FontId { size: self.font_sizes.fight_info_sub_heading * scale_factor, ..Default::default()},
             self.color_scheme.fight_info_sub_heading);
     }
-
 
     fn draw_match_info_dialog(heading: &str, info: &mut MatchInformation, ui: &mut egui::Ui) {
         ui.heading(heading);
@@ -523,25 +496,75 @@ impl BjjScoreboard {
                         .spacing([40.0, 4.0])
                         .striped(true)
                         .show(ui, |ui| {
-                            BjjScoreboard::draw_competitor_dialog("Competitor One", &mut self.bjj_match.info.competitor_one, ui);
-                            ui.separator();
+                            let competitor = &mut self.bjj_match.info.competitor_one;
+                            ui.heading("Competitor One");
                             ui.end_row();
-                            BjjScoreboard::draw_competitor_dialog("Competitor Two", &mut self.bjj_match.info.competitor_two, ui);
+
+                            let first = ui.label("First Name");
+                            ui.text_edit_singleline(&mut competitor.first_name).labelled_by(first.id);
+                            ui.end_row();
+
+                            let last = ui.label("Last Name");
+                            ui.text_edit_singleline(&mut competitor.last_name).labelled_by(last.id);
+                            ui.end_row();
+
+                            let team = ui.label("Team");
+                            ui.text_edit_singleline(&mut competitor.team_name).labelled_by(team.id);
+                            ui.end_row();
+
+                            let country = ui.label("Country");
+                            egui::ComboBox::from_id_source(country.id)
+                                .selected_text(format!("{:?}", competitor.country))
+                                .show_ui(ui, |ui| {
+                                    ui.style_mut().wrap = Some(false);
+                                    ui.set_min_width(60.0);
+                                    for value in self.flags.values() {
+                                        ui.selectable_value(&mut competitor.country, value.country, value.name.as_str());
+                                    }
+                                });
+                            ui.end_row();
+                            ui.separator();
+
+                            let competitor = &mut self.bjj_match.info.competitor_two;
+                            ui.heading("Competitor Two");
+                            ui.end_row();
+
+                            let first = ui.label("First Name");
+                            ui.text_edit_singleline(&mut competitor.first_name).labelled_by(first.id);
+                            ui.end_row();
+
+                            let last = ui.label("Last Name");
+                            ui.text_edit_singleline(&mut competitor.last_name).labelled_by(last.id);
+                            ui.end_row();
+
+                            let team = ui.label("Team");
+                            ui.text_edit_singleline(&mut competitor.team_name).labelled_by(team.id);
+                            ui.end_row();
+
+                            let country = ui.label("Country");
+                            egui::ComboBox::from_id_source(country.id)
+                                .selected_text(format!("{:?}", competitor.country))
+                                .show_ui(ui, |ui| {
+                                    ui.style_mut().wrap = Some(false);
+                                    ui.set_min_width(60.0);
+                                    for value in self.flags.values() {
+                                        ui.selectable_value(&mut competitor.country, value.country, value.name.as_str());
+                                    }
+                                });
+                            ui.end_row();
+
                             ui.separator();
                             ui.end_row();
                             BjjScoreboard::draw_match_info_dialog("Match Information", &mut self.bjj_match.info, ui);
                             ui.separator();
                             ui.end_row();
                             if ui.add(egui::Button::new("Start Match")).clicked() {
-                                self.app_state = AppState::Normal;
-                                self.audio.play_air_horn();
-                                self.bjj_match.start();
+                                self.app_state = AppState::Ready;
                             }
                         });
                 }
             );
     }
-
 
 }
 
@@ -557,12 +580,4 @@ pub fn format_millis(millis: usize) -> String {
     } else {
         format!("{:02}:{:02}.{:03}", minutes, seconds, milliseconds)
     }
-}
-
-pub fn play_audio(sound_file: &'static [u8]) {
-    let (_stream, stream_handle) = OutputStream::try_default().expect("Failed to open default audio device");
-    let file = Cursor::new(sound_file);
-    let source = Decoder::new_wav(file).expect("Failed to decode WAV file");
-    stream_handle.play_raw(source.convert_samples()).expect("Failed to play file");
-    sleep(Duration::from_secs(10));
 }
